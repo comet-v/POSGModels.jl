@@ -26,10 +26,12 @@ end
 Base.@kwdef struct StackedInterceptMG{RM} <: MG{StackedInterceptState, Tuple{SVector{2,Int},Int}}
     reward_model    ::  RM              = DenseReward()
     tag_reward      ::  Float64         = 10.0
+    sam_penalty     ::  Float64         = -5.0
     step_cost       ::  Float64         = 1.0
     discount        ::  Float64         = 0.95
     floor           ::  Coord           = Coord(11, 7)
     obstacles       ::  Set{Coord}      = Set{Coord}()
+    SAMsites        ::  Set{Coord}      = Set{Coord}()
     initialstate    ::  StackedInterceptState  = StackedInterceptState(SA[Coord(1,1),Coord(2,1)], Coord(1,5), false)
     goal            ::  Set{Coord}      = Set{Coord}([Coord(11, 7)])
 end
@@ -113,16 +115,62 @@ MarkovGames.isterminal(::StackedInterceptMG, s) = s.terminal
 
 function MarkovGames.reward(p::StackedInterceptMG, s::StackedInterceptState, a)
     if isterminal(p, s)
-        return 0.0
-    else
-        r = mapreduce(+, s.attackers) do s_i
-            -p.reward_model(s_i, s.defender)
-        end
-        for s_i ∈ s.attackers
-            s_i ∈ p.goal && (r += 10.0)
-        end
-        return r
+        return 0.0 # No reward if already in terminal state
     end
+
+    # Calculate next positions to determine rewards based on outcome
+    a1, a2 = a
+    (;floor, obstacles, goal, SAMsites, reward_model, tag_reward, sam_penalty, step_cost) = p
+
+    next_attackers = map(s.attackers, Tuple(a1)) do s_i, a_i
+        add_if_clear(floor, obstacles, s_i, a_i)
+    end
+    next_defender = add_if_clear(floor, obstacles, s.defender, only(Tuple(a2)))
+
+    # --- Calculate Reward Components based on the *outcome* of action 'a' ---
+
+    # 1. Goal Reward: Positive reward for each attacker reaching the goal
+    goal_reward = 0.0
+    for attacker_sp in next_attackers
+        if attacker_sp ∈ goal
+            goal_reward += tag_reward
+        end
+    end
+
+    # 2. SAM Site Penalty: Negative reward for each attacker landing on a SAM site
+    #    (unless it's also a goal square)
+    sam_penalty_total = 0.0
+    for attacker_sp in next_attackers
+        if attacker_sp ∈ SAMsites && attacker_sp ∉ goal
+            sam_penalty_total += sam_penalty # sam_penalty is negative
+        end
+    end
+
+    # 3. Capture Penalty / Proximity Reward:
+    #    Use reward_model for proximity. If captured, this gives a large value.
+    #    We want negative reward for proximity from attacker's perspective.
+    #    If captured, this should be a large negative reward.
+    proximity_reward_total = 0.0
+    capture_penalty = 0.0
+    for attacker_sp in next_attackers
+        if attacker_sp == next_defender
+            # Apply a large penalty for being captured, potentially overriding proximity
+            capture_penalty -= tag_reward # Use tag_reward as the magnitude of capture penalty
+        else
+            # Regular proximity reward (negative because attacker wants distance)
+            proximity_reward_total -= reward_model(attacker_sp, next_defender)
+        end
+    end
+
+    # 4. Step Cost: Small penalty for taking a step
+    step_cost_total = -step_cost
+
+    # Combine all reward components
+    # Note: If goal is reached or capture occurs, the game transitions to terminal *next* step.
+    # This reward is for the step *leading* to that terminal state.
+    total_reward = goal_reward + sam_penalty_total + proximity_reward_total + capture_penalty + step_cost_total
+
+    return total_reward
 end
 
 function stateindex(f::Coord, s::StackedInterceptState)
@@ -183,6 +231,7 @@ end
     yticks --> nothing
     goals = collect(game.goal)
     obstacles_vis = collect(game.obstacles) # Collect obstacles for plotting
+    samsites_vis = collect(game.SAMsites) # Collect SAM sites for plotting
 
     @series begin
         seriestype  := :scatter
@@ -204,6 +253,20 @@ end
             c := :grey           
             markerstrokewidth := 0
             first.(obstacles_vis), last.(obstacles_vis)
+        end
+    end
+
+    # Plot SAM Sites
+    if !isempty(samsites_vis)
+        @series begin
+            seriestype := :scatter
+            markershape := :square
+            markersize := 15 # Adjust size to fill cell
+            markerstrokewidth := 0
+            c := :purple
+            # Filter out SAM sites that are also goals or obstacles to avoid overplotting
+            samsites_plot = filter(site -> site ∉ goals && site ∉ obstacles_vis, samsites_vis)
+            first.(samsites_plot), last.(samsites_plot)
         end
     end
 end
