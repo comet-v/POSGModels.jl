@@ -182,6 +182,8 @@ end
     xticks --> nothing
     yticks --> nothing
     goals = collect(game.goal)
+    obstacles_vis = collect(game.obstacles) # Collect obstacles for plotting
+
     @series begin
         seriestype  := :scatter
         c           --> [1,2,:red]
@@ -192,6 +194,17 @@ end
         ms := 20
         c := :yellow
         first.(goals), last.(goals)
+    end
+
+    if !isempty(obstacles_vis)
+        @series begin
+            seriestype := :scatter
+            markershape := :square 
+            markersize := 8      
+            c := :grey           
+            markerstrokewidth := 0
+            first.(obstacles_vis), last.(obstacles_vis)
+        end
     end
 end
 
