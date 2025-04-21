@@ -279,13 +279,13 @@ end
     pol12 = vec(sum(_pol1, dims=1)) |> permutedims
     pol2 = σ2 |> permutedims
     @series begin
-        c       --> 1
+        c       --> :blue
         lw      --> 10
         alpha   --> pol11
         action_lines(attacker1)
     end
     @series begin
-        c       --> 2
+        c       --> :blue
         lw      --> 10
         alpha   --> pol12
         action_lines(attacker2)
